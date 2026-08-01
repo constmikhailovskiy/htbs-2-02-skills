@@ -1,0 +1,18 @@
+{
+  "name": "htbs-2-02-skills",
+  "description": "High-Tech Business School practice 2: reusable skill engineering",
+  "owner": {
+    "name": "Dmitry Demianov"
+  },
+  "plugins": [
+    {
+      "name": "estimator",
+      "description": "Engineering team simulator: PRD -> WBS -> per-discipline estimate -> challenger -> confirmed estimate",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "Dmitry Demianov"
+      }
+    }
+  ]
+}

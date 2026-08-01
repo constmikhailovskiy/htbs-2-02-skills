@@ -1,0 +1,18 @@
+{
+  "name": "estimator",
+  "description": "Engineering team simulator: turns a PRD into a work breakdown, estimates it per discipline, then challenges its own estimate and reports the delta",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dmitry Demianov"
+  },
+  "homepage": "https://github.com/constmikhailovskiy/htbs-2-02-skills",
+  "repository": "https://github.com/constmikhailovskiy/htbs-2-02-skills",
+  "license": "UNLICENSED",
+  "keywords": [
+    "estimation",
+    "wbs",
+    "prd",
+    "agent-skills",
+    "claude-code"
+  ]
+}
