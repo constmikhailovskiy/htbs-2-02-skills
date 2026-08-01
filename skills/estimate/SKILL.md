@@ -1,6 +1,6 @@
 ---
 name: estimate
-description: Use when a PRD or feature brief must be turned into a defensible engineering estimate — orchestrates work breakdown, per-discipline estimation, dimension factors and a challenger pass, then reports a machine-checked total
+description: Use when a PRD or feature brief must be turned into a defensible engineering estimate — orchestrates story decomposition, four discipline estimates and an adversarial challenge, gating on machine-checked validation at each step
 argument-hint: "[path to a PRD markdown file]"
 allowed-tools:
   - Read
@@ -11,80 +11,134 @@ allowed-tools:
 
 # /estimate — orchestrator
 
-You coordinate other skills. You do not estimate anything yourself, and you never do arithmetic.
+You coordinate other skills and you own validation. You estimate nothing yourself, and you never do
+arithmetic.
 
-## The one rule that makes this worth running
+```
+Start
+  └─ read PRD ──> story-planner ──> ✋ GATE: --stage stories
+                                        │ FAIL -> back to story-planner
+                                        │ PASS
+                    ┌───────────────────┴───────────────────┐
+              estimate-backend  estimate-frontend  estimate-qa  estimate-devops
+                    └───────────────────┬───────────────────┘
+                                  aggregate ──> challenger ──> aggregate once more
+                                                                    │
+                                                              report + verdict
+```
 
-**Every number in the final report is computed by `scripts/aggregate.py`, never by you.**
+## Two rules that make this worth running
 
-You may write per-item three-point numbers into a JSON bundle because sub-skills produced them.
-You may not add, average, multiply or "sanity check" a total. If you find yourself typing a sum,
-you have broken the only property that distinguishes this from guessing — a total you wrote is
-indistinguishable from a total you invented, and no one downstream can tell which it was.
+**1. Every number in the report is computed by `scripts/aggregate.py`, never by you.** You may copy
+per-story numbers into a JSON bundle because a discipline skill produced them. You may not add,
+average, multiply or "sanity check" a total. A total you wrote is indistinguishable from a total you
+invented, and nobody downstream can tell which it was.
 
-Same for coverage: do not claim requirements are covered. The script decides.
+**2. You gate before you spend.** The decomposition is validated *before* any discipline estimates
+it. Four skills estimating a breakdown that dropped a requirement produces four consistent, wrong
+numbers — and the cost of finding out later is four calls, not one.
 
 ## Procedure
 
-1. **Read the PRD** at the given path. Extract the feature slug (the filename) and every `REQ-NNN`
-   id in its Requirements section. Collect the ids literally — do not renumber, invent or skip.
+### 1. Read the PRD
 
-2. **Work breakdown.** Invoke the `wbs` skill with the PRD text. It returns `items[]` (each with
-   the `req` ids it implements) and `open_questions[]`. Do not add items of your own; if the
-   breakdown looks wrong, run `wbs` again with the objection stated, and keep its output.
+Read the file at the given path. Take the feature slug from the filename and collect every `REQ-NNN`
+id in its Requirements section, literally. Do not renumber, invent or skip.
 
-3. **Estimate per discipline.** Invoke `aspect-backend`, `aspect-mobile` and `aspect-devops`, each
-   once, passing the whole item list. Each returns, per item it touches, `{o, m, p, assumption}` in
-   days. Batch deliberately: one call per discipline, not one per item — per-item calls cost roughly
-   the item count times as much and produce less consistent numbers, because each call sees less of
-   the feature.
+### 2. Decompose — `story-planner`
 
-   A discipline that does not touch an item returns nothing for it. Zero is a claim; silence is not.
+Invoke `story-planner` with the PRD text. It returns `stories[]` (each with the `req` ids it
+implements) and `open_questions[]`.
 
-4. **Dimension factors.** Invoke `dimensions` once for the whole item list. Returns per item
-   `{complexity, risk, unknowns}` — two multipliers and a number of days for what is not yet known.
+Write `.estimates/<feature>/bundle.json`:
 
-5. **Assemble the bundle** at `.estimates/<feature>/bundle.json`:
+```json
+{
+  "prd": { "feature": "workout-reminders", "reqs": ["REQ-001"] },
+  "stories": [{ "id": "S-001", "title": "...", "req": ["REQ-001"] }],
+  "open_questions": []
+}
+```
 
-   ```json
-   {
-     "prd": { "feature": "...", "reqs": ["REQ-001"] },
-     "items": [{ "id": "W-001", "title": "...", "req": ["REQ-001"] }],
-     "estimates": { "backend": [{ "item": "W-001", "o": 1, "m": 2, "p": 4, "assumption": "..." }] },
-     "dimensions": [{ "item": "W-001", "complexity": 1.0, "risk": 1.0, "unknowns": 0.0 }],
-     "open_questions": []
-   }
-   ```
+### 3. ✋ Gate the decomposition — you own this
 
-6. **Aggregate.** Run `python3 scripts/aggregate.py .estimates/<feature>/bundle.json`. Read the
-   checks. **Do not proceed past a `FAIL`** — fix the cause and re-run:
-   - `requirement_coverage` failing means the breakdown dropped a requirement. Back to step 2.
-   - `no_invented_reqs` means a sub-skill made up an id. Re-run that skill.
-   - `assumptions_present` means an estimate arrived unjustified. Re-run that discipline.
+```bash
+python3 scripts/aggregate.py --stage stories .estimates/<feature>/bundle.json
+```
 
-7. **Challenge.** Invoke the `challenger` skill with the bundle and the aggregate output. It attacks
-   the estimate: work nobody planned, items priced below what the assumption implies, dimension
-   factors that do not match the described risk. It returns `challenge.deltas[]` (revised `o/m/p`
-   with a `why`) and `challenge.missed_items[]`.
+**Do not continue while any check reads FAIL.** Fix the cause and re-run the gate:
 
-8. **Re-aggregate once.** Add the `challenge` block to the bundle and run the script again. The
-   script now reports before, after and the delta.
+| Check | Means | Do |
+|---|---|---|
+| `requirement_coverage` | the breakdown dropped a requirement | re-run `story-planner`, naming the missing ids |
+| `no_invented_reqs` | a story cites an id the PRD does not contain | re-run `story-planner`, naming the bad ids |
+| `story_ids_unique` | duplicate story ids | re-run `story-planner` |
+| `every_story_traced` | a story implements no requirement | re-run `story-planner`, naming that story |
 
-   **Stop after one challenge round.** If the challenger still objects, record the objection in the
-   report as an unresolved concern. An unbounded argue-loop is how this runs out of clock, and the
-   second round almost never moves the number as much as the first.
+Re-running one cheap skill beats discovering this after four expensive ones. If two attempts do not
+pass, stop and report the gate output — a decomposition that cannot be made to cover the PRD is a
+finding about the PRD, not a reason to estimate anyway.
 
-9. **Report.** Show the rendered table from the script verbatim, then:
-   - the **delta** — what the challenge changed, and which objection caused it. This is the most
-     honest line in the report; lead with it, not with the total.
-   - **open questions**, each with the requirement it blocks. A question here outranks the number.
-   - the **verdict** line from the script, unedited.
+### 4. Estimate — four disciplines, one call each
+
+Invoke `estimate-backend`, `estimate-frontend`, `estimate-qa` and `estimate-devops`, each **once**,
+passing the whole story list.
+
+Batch deliberately: one call per discipline, not one per story. Per-story calls cost roughly the story
+count times as much and produce *less* consistent numbers, because each call sees less of the feature.
+
+Each returns per story it touches `{o, m, p, complexity, risk, unknowns, assumption}`. A discipline
+that does not touch a story returns nothing for it — silence means "not mine", `0` would be a claim.
+
+Merge into the bundle under `estimates`, keyed by `backend` / `frontend` / `qa` / `devops`.
+
+### 5. Aggregate
+
+```bash
+python3 scripts/aggregate.py .estimates/<feature>/bundle.json
+```
+
+Read the checks. On FAIL, re-run only the discipline responsible:
+
+| Check | Means |
+|---|---|
+| `every_story_estimated` | a story no discipline claimed — ask whether it is real work |
+| `three_point_ordered` | `o <= m <= p` violated; that discipline's numbers are malformed |
+| `assumptions_present` | an estimate arrived unjustified — the challenger has nothing to attack |
+| `no_open_blockers` | `story-planner` raised unanswered questions; see step 8 |
+
+### 6. Challenge — `challenger`
+
+Invoke `challenger` with the stories, all estimates with their assumptions, and the aggregate output.
+It returns `deltas[]` (revised `o/m/p` with a `why`), `missed_items[]` and `unresolved[]`.
+
+### 7. Re-aggregate once
+
+Add the `challenge` block to the bundle and run the script again. It now reports before, after and
+the delta.
+
+**Stop after one challenge round.** If the challenger still objects, report the objection as an
+unresolved concern. An unbounded argue-loop is how this runs out of clock, and the second round almost
+never moves the number as much as the first.
+
+### 8. Report
+
+Show the script's rendered table verbatim, then, in this order:
+
+1. **The delta** — what the challenge changed and which objection caused it. Lead with this, not with
+   the total. It is the most honest line in the report: it shows what the first pass missed.
+2. **`missed_items`** — work the challenger found that nobody priced. Not folded into the number;
+   listed, so someone decides.
+3. **Open questions**, each with the requirement it blocks. These outrank the number.
+4. **The verdict line**, unedited. If it reads `NOT CONFIRMED`, say so first and do not present the
+   total as if it were confirmed.
 
 ## When the PRD does not support an estimate
 
 If requirements name no concrete decision — a reward with no value, "must not be abusable" with no
 fraud rules, an integration with no named provider — the correct output is the open question, not a
-padded number. Say plainly which requirements cannot be priced and why.
+padded number. State plainly which requirements cannot be priced and why, and let the rest of the
+estimate stand on its own.
 
-A confident estimate over an unanswered question is the failure mode this whole skill exists to
-prevent. Producing one is worse than producing nothing, because it will be believed.
+A confident estimate over an unanswered question is the failure mode this skill exists to prevent.
+Producing one is worse than producing nothing, because it will be believed.

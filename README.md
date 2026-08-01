@@ -10,26 +10,54 @@ challenger skill attacks the result before it is reported.
 
 ## Skills
 
+```
+Start
+  └─ read PRD ──> story-planner ──> ✋ GATE: --stage stories
+                                        │ FAIL -> back to story-planner
+                                        │ PASS
+                    ┌───────────────────┴───────────────────┐
+              estimate-backend  estimate-frontend  estimate-qa  estimate-devops
+                    └───────────────────┬───────────────────┘
+                                  aggregate ──> challenger ──> aggregate once more
+                                                                    │
+                                                              report + verdict
+```
+
 | Skill | Does | Status |
 |---|---|---|
 | `estimate` | **orchestrator** — `/estimate <prd.md>`; drives everything below, computes nothing | ✅ |
-| `wbs` | PRD → work items, each tagged with the `req` ids it implements | ✅ |
-| `aspect-backend` | days per item: optimistic / likely / pessimistic | planned |
-| `aspect-mobile` | same, mobile slice | planned |
-| `aspect-devops` | same, infra slice | planned |
-| `dimensions` | complexity / risk / unknowns per item | planned |
-| `challenger` | attacks the estimate: missed work, lowballed items | planned |
+| `story-planner` | PRD → stories, each tagged with the `req` ids it implements | ✅ |
+| `estimate-backend` | `o/m/p` + complexity/risk/unknowns per story | planned |
+| `estimate-frontend` | same, client slice | planned |
+| `estimate-qa` | same, testing slice | planned |
+| `estimate-devops` | same, platform slice | planned |
+| `challenger` | attacks the estimate: missed work, lowballed stories, assumptions that fail | planned |
 
-Aggregation is **not** a skill — it is arithmetic (PERT `(o+4m+p)/6`, multipliers, sums) and belongs
+Aggregation is **not** a skill — it is arithmetic (PERT `(o+4m+p)/6`, factors, sums) and belongs
 outside the model by construction. It lives in `scripts/aggregate.py`, which also owns every
-validator and the `CONFIRMED / NOT CONFIRMED` verdict.
+validator and the verdict.
+
+## The gate is the point
+
+The decomposition is validated **before** any discipline estimates it:
 
 ```bash
-python3 scripts/aggregate.py scripts/fixtures/workout-reminders.json
+python3 scripts/aggregate.py --stage stories scripts/fixtures/workout-reminders.json
+python3 scripts/aggregate.py               scripts/fixtures/workout-reminders.json
 ```
 
-That fixture runs the whole deterministic half with **no model call and no cost** — the reason the
-arithmetic is a script and not skill prose. Exit code is 0 only when every check passes.
+Four skills estimating a breakdown that dropped a requirement produce four consistent, wrong numbers.
+Gating first costs one cheap re-run instead of four expensive ones.
+
+The fixture stands in for the discipline skills, so both stages run with **no model call and no cost**.
+Exit code is 0 only when every check passes — and the checks do fail when they should:
+
+```
+FAIL  requirement_coverage   6/7 covered; missing ['REQ-005']
+FAIL  no_invented_reqs       unknown ids ['REQ-999']
+FAIL  story_ids_unique       duplicated ['S-001']
+verdict: REJECTED — do not estimate this
+```
 
 ## Install
 

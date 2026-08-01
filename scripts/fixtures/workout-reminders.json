@@ -1,41 +1,54 @@
 {
+  "_note": "Stands in for the four discipline skills, which are not implemented yet. Lets the orchestrator's validation and arithmetic be verified at zero cost.",
   "prd": {
     "feature": "workout-reminders",
     "reqs": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"]
   },
-  "items": [
-    { "id": "W-001", "title": "Reminder schedule API (CRUD)", "req": ["REQ-001", "REQ-004", "REQ-006"] },
-    { "id": "W-002", "title": "Reminder picker screen", "req": ["REQ-001", "REQ-004"] },
-    { "id": "W-003", "title": "Scheduling and push delivery", "req": ["REQ-002", "REQ-007"] },
-    { "id": "W-004", "title": "Deep link into today's workout", "req": ["REQ-003"] },
-    { "id": "W-005", "title": "Suppress reminder after completion", "req": ["REQ-005"] }
-  ],
-  "estimates": {
-    "backend": [
-      { "item": "W-001", "o": 1.0, "m": 2.0, "p": 4.0, "assumption": "existing user settings table is extended, not a new service" },
-      { "item": "W-003", "o": 2.0, "m": 3.0, "p": 6.0, "assumption": "an existing push provider integration is reused" },
-      { "item": "W-005", "o": 0.5, "m": 1.0, "p": 2.0, "assumption": "completion events are already emitted" }
-    ],
-    "mobile": [
-      { "item": "W-002", "o": 1.0, "m": 2.0, "p": 3.0, "assumption": "day/time picker follows the existing design system" },
-      { "item": "W-004", "o": 0.5, "m": 1.0, "p": 2.0, "assumption": "deep link routing already exists for other screens" }
-    ],
-    "devops": [
-      { "item": "W-003", "o": 0.5, "m": 1.0, "p": 2.0, "assumption": "scheduler runs on the existing cluster, no new infra" }
-    ]
-  },
-  "dimensions": [
-    { "item": "W-001", "complexity": 1.0, "risk": 1.0, "unknowns": 0.0 },
-    { "item": "W-002", "complexity": 1.1, "risk": 1.0, "unknowns": 0.0 },
-    { "item": "W-003", "complexity": 1.3, "risk": 1.2, "unknowns": 0.5 },
-    { "item": "W-004", "complexity": 1.0, "risk": 1.0, "unknowns": 0.0 },
-    { "item": "W-005", "complexity": 1.0, "risk": 1.1, "unknowns": 0.0 }
+  "stories": [
+    { "id": "S-001", "title": "Pick reminder days and time", "req": ["REQ-001", "REQ-004", "REQ-006"] },
+    { "id": "S-002", "title": "Reminder arrives at the chosen local time", "req": ["REQ-002", "REQ-007"] },
+    { "id": "S-003", "title": "Notification opens today's workout", "req": ["REQ-003"] },
+    { "id": "S-004", "title": "No reminder after a completed workout", "req": ["REQ-005"] }
   ],
   "open_questions": [],
+  "estimates": {
+    "backend": [
+      { "story": "S-001", "o": 1.0, "m": 2.0, "p": 4.0, "complexity": 1.0, "risk": 1.0, "unknowns": 0.0,
+        "assumption": "the existing user-settings table is extended, not a new service" },
+      { "story": "S-002", "o": 2.0, "m": 3.0, "p": 6.0, "complexity": 1.3, "risk": 1.2, "unknowns": 0.5,
+        "assumption": "the existing push provider integration is reused" },
+      { "story": "S-004", "o": 0.5, "m": 1.0, "p": 2.0, "complexity": 1.0, "risk": 1.1, "unknowns": 0.0,
+        "assumption": "workout completion events are already emitted" }
+    ],
+    "frontend": [
+      { "story": "S-001", "o": 1.0, "m": 2.0, "p": 3.0, "complexity": 1.1, "risk": 1.0, "unknowns": 0.0,
+        "assumption": "the day/time picker exists in the design system" },
+      { "story": "S-003", "o": 0.5, "m": 1.0, "p": 2.0, "complexity": 1.0, "risk": 1.0, "unknowns": 0.0,
+        "assumption": "deep-link routing already exists for other screens" }
+    ],
+    "qa": [
+      { "story": "S-001", "o": 0.5, "m": 1.0, "p": 1.5, "complexity": 1.0, "risk": 1.0, "unknowns": 0.0,
+        "assumption": "settings persistence is verifiable without a device farm" },
+      { "story": "S-002", "o": 1.0, "m": 2.0, "p": 4.0, "complexity": 1.5, "risk": 1.2, "unknowns": 1.0,
+        "assumption": "timezone and DST cases need manual device-clock testing" },
+      { "story": "S-003", "o": 0.5, "m": 1.0, "p": 2.0, "complexity": 1.2, "risk": 1.0, "unknowns": 0.0,
+        "assumption": "cold-start deep link is testable on both platforms" },
+      { "story": "S-004", "o": 0.5, "m": 1.0, "p": 2.0, "complexity": 1.2, "risk": 1.2, "unknowns": 0.0,
+        "assumption": "suppression is observable in logs, not only by absence" }
+    ],
+    "devops": [
+      { "story": "S-002", "o": 0.5, "m": 1.0, "p": 2.0, "complexity": 1.0, "risk": 1.2, "unknowns": 0.0,
+        "assumption": "the scheduler runs on the existing cluster, no new infra" }
+    ]
+  },
   "challenge": {
     "deltas": [
-      { "item": "W-003", "aspect": "backend", "m": 4.5, "p": 8.0, "why": "timezone changes mid-schedule need reschedule-on-move; not in the original number" }
+      { "story": "S-002", "aspect": "backend", "o": 3.0, "m": 4.5, "p": 8.0,
+        "why": "the assumption reuses the push provider but timezone change mid-schedule needs reschedule-on-move, which is not in that number" }
     ],
-    "missed_items": []
+    "missed_items": [
+      { "story": "S-002", "aspect": "devops", "what": "no alert for silently undelivered reminders — the feature fails invisibly" }
+    ],
+    "unresolved": []
   }
 }

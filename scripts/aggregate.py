@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Deterministic half of the estimate. No model may do this arithmetic.
 
-Reads one JSON bundle on stdin or as argv[1], writes the report to stdout as JSON.
-Every number here is computed: PERT per item per aspect, dimension multipliers,
-totals, and the coverage verdict. The model's only contribution to the input is
-per-item three-point numbers, dimension factors, and challenger deltas.
+Two stages, because they gate at different costs:
+
+    --stage stories   validate the story decomposition ALONE. Cheap, and runs
+                      before any estimate call, so a breakdown that dropped a
+                      requirement is caught before four disciplines are paid to
+                      estimate it.
+    --stage full      (default) aggregate estimates into the summary + verdict.
+
+Every number here is computed: PERT per story per discipline, dimension factors,
+totals, and the verdict. The model contributes only per-story three-point
+numbers, factors, assumptions and challenger deltas.
 
 Usage:
+    python3 scripts/aggregate.py --stage stories bundle.json
     python3 scripts/aggregate.py bundle.json
-    cat bundle.json | python3 scripts/aggregate.py
 """
 
 from __future__ import annotations
@@ -16,7 +23,8 @@ from __future__ import annotations
 import json
 import sys
 
-ASPECTS = ("backend", "mobile", "devops")
+ASPECTS = ("backend", "frontend", "qa", "devops")
+LABEL = {"backend": "be", "frontend": "fe", "qa": "qa", "devops": "ops"}
 
 
 def pert(o: float, m: float, p: float) -> float:
@@ -28,40 +36,76 @@ def _round(x: float) -> float:
     return round(x + 1e-9, 2)
 
 
+def _check(name: str, ok: bool, detail: str) -> dict:
+    return {"check": name, "ok": ok, "detail": detail}
+
+
+# --------------------------------------------------------------- stage: stories
+
+
+def validate_stories(bundle: dict) -> list[dict]:
+    """The gate after story decomposition. Runs before anything is estimated."""
+    declared = set(bundle.get("prd", {}).get("reqs", []))
+    stories = bundle.get("stories", [])
+    covered = {r for s in stories for r in s.get("req", [])}
+
+    missing = sorted(declared - covered)
+    orphans = sorted(covered - declared)
+    ids = [s.get("id", "") for s in stories]
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    untagged = [s.get("id", "?") for s in stories if not s.get("req")]
+    unnamed = [s.get("id", "?") for s in stories if not str(s.get("title", "")).strip()]
+
+    return [
+        _check("stories_present", bool(stories), f"{len(stories)} story/stories"),
+        _check(
+            "requirement_coverage",
+            bool(declared) and not missing,
+            f"{len(covered & declared)}/{len(declared)} covered" + (f"; missing {missing}" if missing else ""),
+        ),
+        _check("no_invented_reqs", not orphans, f"unknown ids {orphans}" if orphans else "all ids exist in the PRD"),
+        _check("story_ids_unique", not dupes, f"duplicated {dupes}" if dupes else "all distinct"),
+        _check(
+            "every_story_traced",
+            not untagged,
+            f"untagged {untagged}" if untagged else "every story names the reqs it implements",
+        ),
+        _check("every_story_named", not unnamed, f"empty title {unnamed}" if unnamed else "all titled"),
+    ]
+
+
+# ------------------------------------------------------------------ stage: full
+
+
 def aggregate(bundle: dict) -> dict:
-    items = bundle["items"]
+    stories = bundle["stories"]
     estimates = bundle.get("estimates", {})
-    dims = {d["item"]: d for d in bundle.get("dimensions", [])}
-    deltas = {(d["item"], d["aspect"]): d for d in bundle.get("challenge", {}).get("deltas", [])}
+    deltas = {(d["story"], d["aspect"]): d for d in bundle.get("challenge", {}).get("deltas", [])}
 
     def build(apply_challenge: bool) -> tuple[list[dict], float]:
         rows, grand = [], 0.0
-        for item in items:
-            row: dict = {"id": item["id"], "title": item["title"], "req": item.get("req", []), "aspects": {}}
-            base = 0.0
-            for aspect in ASPECTS:
-                entry = next((e for e in estimates.get(aspect, []) if e["item"] == item["id"]), None)
-                if entry is None:
-                    continue
-                o, m, p = float(entry["o"]), float(entry["m"]), float(entry["p"])
-                if apply_challenge:
-                    delta = deltas.get((item["id"], aspect))
-                    if delta:
-                        o, m, p = (float(delta.get(k, v)) for k, v in (("o", o), ("m", m), ("p", p)))
-                days = pert(o, m, p)
-                row["aspects"][aspect] = _round(days)
-                base += days
-            d = dims.get(item["id"], {})
-            complexity, risk = float(d.get("complexity", 1.0)), float(d.get("risk", 1.0))
-            unknowns = float(d.get("unknowns", 0.0))
-            total = base * complexity * risk + unknowns
-            row |= {
-                "base_days": _round(base),
-                "complexity": complexity,
-                "risk": risk,
-                "unknowns_days": unknowns,
-                "total_days": _round(total),
+        for story in stories:
+            row: dict = {
+                "id": story["id"],
+                "title": story["title"],
+                "req": story.get("req", []),
+                "aspects": {},
             }
+            total = 0.0
+            for aspect in ASPECTS:
+                e = next((x for x in estimates.get(aspect, []) if x["story"] == story["id"]), None)
+                if e is None:
+                    continue  # a discipline that does not touch a story says nothing
+                o, m, p = float(e["o"]), float(e["m"]), float(e["p"])
+                if apply_challenge and (d := deltas.get((story["id"], aspect))):
+                    o, m, p = float(d.get("o", o)), float(d.get("m", m)), float(d.get("p", p))
+                # Factors are per discipline per story: backend risk on a story is
+                # not frontend risk on the same story.
+                days = pert(o, m, p) * float(e.get("complexity", 1.0)) * float(e.get("risk", 1.0))
+                days += float(e.get("unknowns", 0.0))
+                row["aspects"][aspect] = _round(days)
+                total += days
+            row["total_days"] = _round(total)
             rows.append(row)
             grand += total
         return rows, _round(grand)
@@ -71,91 +115,118 @@ def aggregate(bundle: dict) -> dict:
 
     return {
         "feature": bundle.get("prd", {}).get("feature", "unknown"),
-        "before": {"items": before_rows, "total_days": before_total},
-        "after": {"items": after_rows, "total_days": after_total},
+        "before": {"stories": before_rows, "total_days": before_total},
+        "after": {"stories": after_rows, "total_days": after_total},
         "delta_days": _round(after_total - before_total),
-        "checks": validate(bundle, before_rows),
+        "by_aspect": {
+            a: _round(sum(r["aspects"].get(a, 0.0) for r in after_rows))
+            for a in ASPECTS
+            if any(a in r["aspects"] for r in after_rows)
+        },
+        "checks": validate_stories(bundle) + validate_estimates(bundle, after_rows),
     }
 
 
-def validate(bundle: dict, rows: list[dict]) -> list[dict]:
-    """Machine-checked confirmation. A failing check invalidates the estimate."""
-    checks: list[dict] = []
+def validate_estimates(bundle: dict, rows: list[dict]) -> list[dict]:
+    estimates = bundle.get("estimates", {})
+    entries = [e for v in estimates.values() for e in v]
 
-    def add(name: str, ok: bool, detail: str) -> None:
-        checks.append({"check": name, "ok": ok, "detail": detail})
-
-    declared = set(bundle.get("prd", {}).get("reqs", []))
-    covered = {r for row in rows for r in row["req"]}
-    missing = sorted(declared - covered)
-    add(
-        "requirement_coverage",
-        not missing and bool(declared),
-        f"{len(covered & declared)}/{len(declared)} covered" + (f"; missing {missing}" if missing else ""),
-    )
-
-    orphans = sorted(covered - declared)
-    add("no_invented_reqs", not orphans, f"unknown ids {orphans}" if orphans else "all ids exist in the PRD")
-
-    unestimated = [row["id"] for row in rows if not row["aspects"]]
-    add(
-        "every_item_estimated",
-        not unestimated,
-        f"{len(rows) - len(unestimated)}/{len(rows)} items have at least one aspect"
-        + (f"; bare {unestimated}" if unestimated else ""),
-    )
-
-    total_entries = sum(len(v) for v in bundle.get("estimates", {}).values())
-    with_assumption = sum(
-        1 for v in bundle.get("estimates", {}).values() for e in v if str(e.get("assumption", "")).strip()
-    )
-    add("assumptions_present", total_entries == with_assumption, f"{with_assumption}/{total_entries} estimates justified")
-
+    bare = [r["id"] for r in rows if not r["aspects"]]
+    unjustified = sum(1 for e in entries if not str(e.get("assumption", "")).strip())
+    inverted = [
+        f"{a}/{e['story']}"
+        for a, v in estimates.items()
+        for e in v
+        if not (float(e["o"]) <= float(e["m"]) <= float(e["p"]))
+    ]
+    unknown_story = [
+        f"{a}/{e['story']}" for a, v in estimates.items() for e in v if e["story"] not in {r["id"] for r in rows}
+    ]
     open_q = bundle.get("open_questions", [])
-    add(
-        "blockers_surfaced",
-        True,
-        f"{len(open_q)} open question(s) — an estimate over an unanswered question is a guess"
-        if open_q
-        else "none reported",
-    )
+    challenge = bundle.get("challenge")
+    missed = (challenge or {}).get("missed_items", [])
 
-    missed = bundle.get("challenge", {}).get("missed_items", [])
-    add("challenger_ran", "challenge" in bundle, f"{len(missed)} missed item(s) raised" if missed else "no omissions found")
+    return [
+        _check(
+            "every_story_estimated",
+            not bare,
+            f"{len(rows) - len(bare)}/{len(rows)} have a discipline" + (f"; bare {bare}" if bare else ""),
+        ),
+        _check("estimates_map_to_stories", not unknown_story, f"unknown {unknown_story}" if unknown_story else "all match"),
+        _check(
+            "three_point_ordered",
+            not inverted,
+            f"o<=m<=p violated in {inverted}" if inverted else f"{len(entries)} estimate(s) well-formed",
+        ),
+        _check("assumptions_present", not unjustified, f"{len(entries) - unjustified}/{len(entries)} justified"),
+        _check(
+            "no_open_blockers",
+            not open_q,
+            f"{len(open_q)} unanswered question(s) — the number over them is a guess"
+            if open_q
+            else "none reported",
+        ),
+        _check(
+            "challenger_ran",
+            challenge is not None,
+            f"{len(missed)} omission(s) raised" if missed else "ran, no omissions found" if challenge else "NOT RUN",
+        ),
+    ]
 
-    return checks
+
+# ---------------------------------------------------------------------- output
 
 
 def render(report: dict) -> str:
-    out = [f"feature: {report['feature']}", ""]
-    hdr = f"{'item':<8}{'title':<42}{'be':>6}{'mob':>6}{'ops':>6}{'base':>7}{'x':>7}{'total':>8}"
-    out += [hdr, "-" * len(hdr)]
-    for row in report["after"]["items"]:
-        a = row["aspects"]
-        mult = f"{row['complexity'] * row['risk']:.2f}"
-        out.append(
-            f"{row['id']:<8}{row['title'][:41]:<42}"
-            f"{a.get('backend', 0):>6}{a.get('mobile', 0):>6}{a.get('devops', 0):>6}"
-            f"{row['base_days']:>7}{mult:>7}{row['total_days']:>8}"
-        )
+    cols = "".join(f"{LABEL[a]:>7}" for a in ASPECTS)
+    hdr = f"{'story':<8}{'title':<40}{cols}{'total':>8}"
+    out = [f"feature: {report['feature']}", "", hdr, "-" * len(hdr)]
+    for r in report["after"]["stories"]:
+        cells = "".join(f"{r['aspects'].get(a, '-'):>7}" for a in ASPECTS)
+        out.append(f"{r['id']:<8}{r['title'][:39]:<40}{cells}{r['total_days']:>8}")
+    out.append("-" * len(hdr))
+    out.append(f"{'by discipline':<48}" + "".join(f"{report['by_aspect'].get(a, '-'):>7}" for a in ASPECTS))
     out += [
-        "-" * len(hdr),
-        f"{'before challenge':<70}{report['before']['total_days']:>8}",
-        f"{'after challenge':<70}{report['after']['total_days']:>8}",
-        f"{'delta':<70}{report['delta_days']:>8}",
+        "",
+        f"{'before challenge':<56}{report['before']['total_days']:>8}",
+        f"{'after challenge':<56}{report['after']['total_days']:>8}",
+        f"{'delta':<56}{report['delta_days']:>8}",
         "",
         "checks",
     ]
     for c in report["checks"]:
-        out.append(f"  {'PASS' if c['ok'] else 'FAIL'}  {c['check']:<24}{c['detail']}")
-    verdict = "CONFIRMED" if all(c["ok"] for c in report["checks"]) else "NOT CONFIRMED"
-    out += ["", f"verdict: {verdict}"]
+        out.append(f"  {'PASS' if c['ok'] else 'FAIL'}  {c['check']:<26}{c['detail']}")
+    out += ["", f"verdict: {'CONFIRMED' if all(c['ok'] for c in report['checks']) else 'NOT CONFIRMED'}"]
+    return "\n".join(out)
+
+
+def render_checks(checks: list[dict], title: str) -> str:
+    out = [title, ""]
+    for c in checks:
+        out.append(f"  {'PASS' if c['ok'] else 'FAIL'}  {c['check']:<26}{c['detail']}")
+    ok = all(c["ok"] for c in checks)
+    out += ["", f"verdict: {'DECOMPOSITION OK — safe to estimate' if ok else 'REJECTED — do not estimate this'}"]
     return "\n".join(out)
 
 
 def main() -> int:
-    raw = open(sys.argv[1]).read() if len(sys.argv) > 1 else sys.stdin.read()
-    report = aggregate(json.loads(raw))
+    argv = sys.argv[1:]
+    stage = "full"
+    if "--stage" in argv:
+        i = argv.index("--stage")
+        stage = argv[i + 1]
+        del argv[i : i + 2]
+    raw = open(argv[0]).read() if argv else sys.stdin.read()
+    bundle = json.loads(raw)
+
+    if stage == "stories":
+        checks = validate_stories(bundle)
+        print(render_checks(checks, "story decomposition gate"))
+        print()
+        print(json.dumps({"checks": checks}, indent=2))
+        return 0 if all(c["ok"] for c in checks) else 1
+
+    report = aggregate(bundle)
     print(render(report))
     print()
     print(json.dumps(report, indent=2))
