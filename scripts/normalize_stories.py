@@ -72,7 +72,10 @@ def normalize(plan: dict) -> dict:
                 # The plan schema has no per-story out_of_scope. Per the contract, an
                 # empty array means "nothing was written down", not "nothing exists".
                 "out_of_scope": [],
-                "readiness": s.get("readiness", "needs_clarification"),
+                # readiness is ready|blocked since the HITL gates were dropped. Default
+                # to blocked, not ready: a story whose readiness went missing must not
+                # be silently priced as though someone had cleared it.
+                "readiness": s.get("readiness", "blocked"),
             }
         )
 

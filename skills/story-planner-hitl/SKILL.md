@@ -1,11 +1,11 @@
 ---
 name: story-planner-hitl
-description: Convert a product requirements document (PRD), feature brief, or requirements specification into traceable, estimate-ready user stories with acceptance criteria, domain routing for FE, BE, QA, and DevOps, coverage checks, explicit assumptions, and mandatory human-in-the-loop approval gates. Use when preparing work for downstream estimation agents or a deterministic workflow, reviewing story decomposition, identifying PRD gaps or contradictions, or revising a story plan after stakeholder feedback. Do not use to estimate effort, select architecture, or create implementation tasks.
+description: Convert a product requirements document (PRD), feature brief, or requirements specification into traceable, estimate-ready user stories with acceptance criteria, domain routing for FE, BE, QA, and DevOps, coverage checks, and explicitly labeled assumptions — fully autonomously, with no approval gates. Use when preparing work for downstream estimation agents or a deterministic workflow, decomposing a PRD end to end, or identifying PRD gaps and contradictions. Do not use to estimate effort, select architecture, or create implementation tasks.
 ---
 
-# Story Planner (HITL)
+# Story Planner (autonomous)
 
-Transform a PRD into vertical, independently estimable user stories. Preserve traceability, expose uncertainty, and stop for human approval before marking the plan ready for FE, BE, QA, and DevOps estimators.
+Transform a PRD into vertical, independently estimable user stories in a single autonomous pass. Preserve traceability, resolve ambiguity by adopting labeled assumptions, and emit a terminal result routed for FE, BE, QA, and DevOps estimators — without pausing for human approval.
 
 Paths below (`references/…`, `scripts/…`) are relative to this skill's directory.
 
@@ -14,10 +14,10 @@ Paths below (`references/…`, `scripts/…`) are relative to this skill's direc
 - Plan stories; never estimate hours, days, story points, effort, or complexity.
 - Describe observable product behavior; never invent APIs, tables, components, cloud services, frameworks, or architecture.
 - Treat PRD statements as facts only when traceable to the supplied source.
-- Label derived requirements, assumptions, questions, contradictions, and missing information explicitly.
+- Label derived requirements, assumptions, residual questions, and contradictions explicitly.
 - Keep technical implementation tasks out of the story list. Let downstream domain nodes derive them.
 - Preserve the PRD language unless the user requests another language.
-- Never set `READY_FOR_ESTIMATION` without recorded human approval at both gates.
+- Run to completion without asking for approval. Resolve ambiguity by adopting the most defensible assumption; return `BLOCKED` only for a true contradiction or missing fact that no interpretation can settle.
 
 ## Read the output contract
 
@@ -74,11 +74,21 @@ For each story:
 - add observable Given/When/Then acceptance criteria;
 - capture business rules, edge cases, dependencies, and relevant non-functional requirements;
 - route potential impact to `fe`, `be`, `qa`, and `devops` without estimating the work;
-- mark readiness as `ready`, `needs_clarification`, or `blocked`.
+- mark readiness as `ready`, or `blocked` when a blocking question could not be settled by assumption.
 
 Set `qa: true` for every estimate-ready story. Set `devops: true` only for a story with a specific operational, environment, secret, observability, migration, deployment, networking, or managed-service impact.
 
-### 4. Run a completeness and quality pass
+### 4. Resolve ambiguity autonomously
+
+When the PRD is silent or ambiguous, decide rather than ask:
+
+- adopt the most defensible interpretation as an `assumptions` entry with a `statement`, a `rationale`, and `affected_story_ids`;
+- if you surfaced the ambiguity as an `open_questions` entry, set its `status` to `resolved_by_assumption` and name the adopting assumption in `resolution`;
+- set `evidence_type: assumption` on any requirement decomposed under an adopted assumption.
+
+Reserve a genuine `blocking` question (`status: open`) only for a contradiction or missing fact that no interpretation can settle — this forces overall status `BLOCKED`.
+
+### 5. Run a completeness and quality pass
 
 Verify that:
 
@@ -89,69 +99,25 @@ Verify that:
 - non-functional and cross-cutting requirements remain visible;
 - dependencies reference existing stories and contain no obvious cycle;
 - acceptance criteria are observable and testable;
-- assumptions are not presented as PRD facts;
+- assumptions are recorded in `assumptions`, not presented as PRD facts;
 - no estimate or invented implementation detail appears.
 
 Calculate coverage from the requirement registry. Do not claim 100% coverage when requirements remain uncovered or excluded without a recorded reason.
 
-### 5. Pause at HITL Gate 1: scope and decomposition
+### 6. Emit the terminal result
 
-Set status to `DRAFT_AWAITING_SCOPE_REVIEW` and current gate to `scope_review`. Present:
+Set `READY_FOR_ESTIMATION` when:
 
-- a compact story list;
-- covered, uncovered, and excluded requirement counts;
-- proposed assumptions;
-- contradictions and blocking questions;
-- decomposition choices that materially affect scope.
-
-Ask the human to approve the scope/decomposition or provide revisions. State explicitly that the skill requires this pause. Do not continue to the readiness gate until the response is recorded in `decision_log`.
-
-If operating as a deterministic workflow node, return the structured payload and stop execution. Resume only with an explicit human decision event.
-
-### 6. Apply human decisions
-
-Apply only the decisions the reviewer made. Record the reviewer label, decision, timestamp when available, and notes. Never infer approval from silence.
-
-When the reviewer requests changes, set `REVISION_REQUIRED`, revise the registry and stories, rerun quality checks, and return to Gate 1 if scope changed materially.
-
-When blocking questions remain, set `DRAFT_AWAITING_CLARIFICATION`. Batch related questions, explain their estimation impact, and avoid asking for preferences that do not affect story boundaries or acceptance.
-
-### 7. Pause at HITL Gate 2: estimation readiness
-
-After scope approval and revision, set status to `DRAFT_AWAITING_READINESS_APPROVAL` and current gate to `readiness_approval`. Present:
-
-- final story count and routing counts by domain;
-- stories still marked `needs_clarification` or `blocked`;
-- open assumptions and non-blocking questions;
-- coverage and quality-check results;
-- the exact downstream handoff boundary.
-
-Ask the human to approve readiness or request revisions. State explicitly that the skill requires this pause. Never treat approval of Gate 1 as approval of Gate 2.
-
-### 8. Finalize the handoff
-
-Set `READY_FOR_ESTIMATION` only when:
-
-- both HITL gates have explicit approvals in `decision_log`;
-- all stories are `ready`;
-- no blocking question remains open or deferred;
+- at least one story exists and all stories are `ready`;
+- `qa: true` for every story;
+- no `open_questions` entry is both `blocking: true` and `status: open`;
 - every included requirement is covered;
-- all deterministic validation errors are resolved.
+- all quality checks pass;
+- no estimation or implementation-design field appears.
 
 Return the complete structured plan. Downstream nodes must estimate only their routed domain impact and must not reinterpret the entire PRD unless the handoff explicitly identifies missing context.
 
-Set `BLOCKED` when a contradiction or missing decision prevents meaningful decomposition after the human has been asked. Describe the exact decision needed to resume.
-
-## Handle compact human commands
-
-Interpret human responses conservatively:
-
-- `approve scope` approves Gate 1 only.
-- `approve readiness` approves Gate 2 only.
-- `approve all` approves both gates only when the complete Gate 2 package is visible in the same interaction.
-- `revise ...` records a revision request and invalidates later approvals affected by the change.
-- An answer to a question resolves that question but does not imply gate approval.
-- Silence, acknowledgement, or “looks interesting” never counts as approval.
+Set `BLOCKED` when a contradiction or missing fact prevents meaningful decomposition and no assumption can defensibly resolve it. Record the exact decision needed to resume as an `open_questions` entry with `blocking: true` and `status: open`.
 
 ## Validate orchestration output
 
@@ -161,4 +127,4 @@ Save the structured result as JSON when the workflow requires machine-readable o
 python3 scripts/validate_story_plan.py path/to/story-plan.json
 ```
 
-Treat validator errors as blocking. Treat warnings as items to disclose at the next HITL gate.
+Treat validator errors as blocking. Treat warnings as items to disclose in the returned plan.

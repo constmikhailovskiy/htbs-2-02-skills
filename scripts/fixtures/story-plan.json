@@ -77,7 +77,8 @@
     {
       "assumption_id": "ASM-001",
       "statement": "the existing push provider integration is reused rather than replaced",
-      "status": "proposed",
+      "rationale": "the PRD names no provider; the app already sends transactional pushes, and introducing a second provider would be a platform decision the brief does not make",
+      "status": "adopted",
       "affected_story_ids": ["US-002"]
     }
   ],
@@ -103,10 +104,5 @@
     "no_estimates": true,
     "no_invented_implementation": true,
     "dependencies_valid": true
-  },
-  "human_review": {
-    "current_gate": "complete",
-    "requested_decisions": [],
-    "decision_log": []
   }
 }

@@ -45,9 +45,8 @@ document the contract; they do not instruct one.
 `/estimate` drives the graph with no human in the loop. The deterministic steps it owns:
 
 ```bash
-# gate the plan — no reviewer present, so the two HITL gates are waived explicitly
-python3 skills/story-planner-hitl/scripts/validate_story_plan.py \
-        --autonomous scripts/fixtures/story-plan.json
+# gate the plan — deterministic, no reviewer
+python3 skills/story-planner-hitl/scripts/validate_story_plan.py scripts/fixtures/story-plan.json
 
 # plan shape -> contracts/story.v1.md  (fe/be -> frontend/backend, criterion_id -> id)
 python3 scripts/normalize_stories.py scripts/fixtures/story-plan.json > stories.json
@@ -58,19 +57,15 @@ python3 scripts/summarize.py scripts/fixtures/run.json
 
 The fixtures stand in for the model steps, so all three run at **zero cost**.
 
-**`--autonomous` waives the human gates and nothing else.** Coverage, traceability, readiness,
-dependency cycles and the quality checks all still block. The waiver is reported, so a
-machine-validated plan is never mistaken for an approved one:
+There is no approval step to waive: the planner reaches `READY_FOR_ESTIMATION` or `BLOCKED` in one
+pass. Everything else still blocks — coverage, traceability, readiness, dependency cycles, quality
+checks, and an assumption adopted without a `rationale`.
 
-```
-WARNING: autonomous mode: human approval gates waived — machine-validated, not human-approved
-WARNING: READY_FOR_ESTIMATION has unapproved assumptions: ASM-001
-VALID
-```
-
-Without the flag the same plan is `INVALID` — `lacks approvals for: readiness_approval, scope_review`.
-Nothing forges a `decision_log` entry; an unattended run has no reviewer, and saying otherwise would
-be undetectable downstream.
+**What replaced approval is worth naming.** Ambiguity is now closed by adopting a labelled assumption,
+so each one is a product decision a machine made unreviewed, and the total rests on all of them.
+A question marked `resolved_by_assumption` was not answered — it was decided. `/estimate` reports
+both, with rationales, ahead of the number. `BLOCKED` is the honest halt: a contradiction no
+assumption can resolve is not something to re-plan around.
 
 ### Two format hazards the scripts exist to catch
 

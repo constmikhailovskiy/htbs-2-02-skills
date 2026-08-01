@@ -18,7 +18,7 @@ stopping for a human. You estimate nothing yourself and you never do arithmetic.
 read PRD
   └─ estimate-orchestrator ──> sides
   └─ story-planner ──────────> story plan (story-plan.schema.json)
-        └─ ✋ validate_story_plan.py --autonomous     deterministic gate, no reviewer
+        └─ ✋ validate_story_plan.py                  deterministic gate, no reviewer
         └─ normalize_stories.py                      plan shape -> contracts/story.v1.md
               ┌──────────────┬──────────────┬──────────────┐
          be-estimate  frontend-estimate  qa-estimate  devops-estimate   (selected sides only)
@@ -37,11 +37,14 @@ number, or apply the buffer. A total you wrote is indistinguishable from one you
 sides estimating a plan that dropped a requirement produce four consistent, wrong numbers, and
 finding out afterwards costs four calls instead of one.
 
-**3. Autonomous is not approved.** `--autonomous` waives the two human gates because there is no
-reviewer present. It waives nothing else. The validator emits a warning saying the plan is
-machine-validated rather than human-approved, and **that warning must reach your final report**.
-Never write a `decision_log` entry describing an approval that did not happen — a forged approval is
-worse than a missing one, because it cannot be detected downstream.
+**3. Nothing was approved — assumptions were adopted.** The planner resolves ambiguity by adopting a
+labelled assumption with a rationale, and reaches `READY_FOR_ESTIMATION` with no reviewer involved.
+That is the design, not a shortcut. But it means **every adopted assumption is a decision a machine
+made on the product's behalf**, and the total rests on all of them.
+
+So `assumptions[]` is not an appendix — it is the list of product decisions nobody signed off. Report
+every one with its rationale. An unattended run that hides them is presenting a number as agreed when
+what it really has is a number plus a pile of guesses that happened to be written down.
 
 ## Procedure
 
@@ -75,7 +78,7 @@ the validator below enforces it exactly.
 
 ```bash
 python3 skills/story-planner-hitl/scripts/validate_story_plan.py \
-        --autonomous .estimates/<feature>/story-plan.json
+        .estimates/<feature>/story-plan.json
 ```
 
 **Do not continue while the result is `INVALID`.** Re-run `story-planner` with the errors quoted
@@ -87,14 +90,22 @@ verbatim; they name the exact field and id. Common causes:
 | `requires zero uncovered requirements` | a requirement reached no story — work is missing |
 | `references unknown requirements` | a story cites a `REQ` id that does not exist |
 | `traceability mismatch` | a requirement links a story that does not link back |
-| `has non-ready stories` | a story is `needs_clarification` or `blocked` |
+| `has non-ready stories` | a story is `blocked` |
 | `story dependency cycle` | the plan cannot be sequenced |
+| `assumptions[n] is missing fields: rationale` | an assumption was adopted without saying why |
 
 Allow at most **two** re-plans. If the third attempt still fails, stop and report the validator
 output as the finding. A plan that cannot be made to cover the brief is a fact about the brief; it is
 not a reason to estimate anyway.
 
-Carry every `WARNING` forward — especially unapproved assumptions and the autonomous-mode waiver.
+Two terminal states exist, and only one is estimable:
+
+- **`READY_FOR_ESTIMATION`** — continue.
+- **`BLOCKED`** — a contradiction no assumption can resolve. **Stop and report it.** Do not re-plan
+  around a blocker; the planner already tried, and adopting an assumption over a contradiction is how
+  a wrong number gets manufactured. Report the exact decision needed to resume.
+
+Carry every `WARNING` forward.
 
 ### 5. Normalize to the story contract
 
@@ -153,10 +164,10 @@ summed, then the buffer applied once from `ESTIMATION_RISK_BUFFER_PCT` (default 
 
 Show the rendered table verbatim, then, in this order:
 
-1. **The autonomous-mode warning**, stated plainly: this estimate was machine-validated, not
-   human-approved. First, not in a footnote.
-2. **Unapproved assumptions** — in an unattended run nobody approved them, and the total rests on
-   every one.
+1. **Adopted assumptions, each with its rationale** — stated plainly as product decisions taken
+   without a reviewer. First, not in a footnote: the total rests on every one of them.
+2. **Questions marked `resolved_by_assumption`** — these were not answered, they were decided.
+   Name the assumption that closed each one so a reader can disagree with it.
 3. **Open questions and blocked stories**, each with the requirement it blocks. These outrank the
    number.
 4. **Unbuffered and buffered totals**, both, with the buffer percentage named. A single number hides
