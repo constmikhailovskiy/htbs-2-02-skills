@@ -12,6 +12,7 @@ challenger skill attacks the result before it is reported.
 
 | Skill | Does | Status |
 |---|---|---|
+| `estimate` | **orchestrator** — `/estimate <prd.md>`; drives everything below, computes nothing | ✅ |
 | `wbs` | PRD → work items, each tagged with the `req` ids it implements | ✅ |
 | `aspect-backend` | days per item: optimistic / likely / pessimistic | planned |
 | `aspect-mobile` | same, mobile slice | planned |
@@ -19,8 +20,16 @@ challenger skill attacks the result before it is reported.
 | `dimensions` | complexity / risk / unknowns per item | planned |
 | `challenger` | attacks the estimate: missed work, lowballed items | planned |
 
-Aggregation is **not** a skill — it is arithmetic (PERT `(o+4m+p)/6`, multipliers, sums) and
-belongs outside the model by construction.
+Aggregation is **not** a skill — it is arithmetic (PERT `(o+4m+p)/6`, multipliers, sums) and belongs
+outside the model by construction. It lives in `scripts/aggregate.py`, which also owns every
+validator and the `CONFIRMED / NOT CONFIRMED` verdict.
+
+```bash
+python3 scripts/aggregate.py scripts/fixtures/workout-reminders.json
+```
+
+That fixture runs the whole deterministic half with **no model call and no cost** — the reason the
+arithmetic is a script and not skill prose. Exit code is 0 only when every check passes.
 
 ## Install
 
