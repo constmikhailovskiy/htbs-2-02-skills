@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "workout-reminders-001",
+  "status": "READY_FOR_ESTIMATION",
+  "prd": {
+    "title": "Workout reminders",
+    "source_id": "prd/workout-reminders.md",
+    "version": null,
+    "language": "en"
+  },
+  "requirements": [
+    {
+      "requirement_id": "REQ-001",
+      "source_ref": "Requirements > REQ-001",
+      "statement": "The user picks reminder days and one time of day",
+      "category": "functional",
+      "evidence_type": "explicit",
+      "coverage_status": "covered",
+      "story_ids": ["US-001"]
+    },
+    {
+      "requirement_id": "REQ-002",
+      "source_ref": "Requirements > REQ-002",
+      "statement": "A push notification is delivered at that local time on each selected day",
+      "category": "functional",
+      "evidence_type": "explicit",
+      "coverage_status": "covered",
+      "story_ids": ["US-002"]
+    }
+  ],
+  "stories": [
+    {
+      "story_id": "US-001",
+      "title": "Pick reminder days and time",
+      "user_story": "As a user with a plan, I want to choose which days and time I am reminded, so that the reminder fits my routine",
+      "business_value": "A reminder the user chose is a reminder they do not mute",
+      "source_requirement_ids": ["REQ-001"],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "AC-001",
+          "given": "the user is on the reminder screen",
+          "when": "they select Mon/Wed/Fri and 07:30",
+          "then": "the schedule is saved and shown back to them"
+        }
+      ],
+      "business_rules": ["a schedule with no selected day is not a valid schedule"],
+      "edge_cases": ["the user deselects every day"],
+      "non_functional_requirements": ["settings survive reinstall and match on every device"],
+      "dependencies": [],
+      "domain_impact": { "fe": true, "be": true, "qa": true, "devops": false },
+      "readiness": "ready"
+    },
+    {
+      "story_id": "US-002",
+      "title": "Reminder arrives at the chosen local time",
+      "user_story": "As a user with a schedule, I want the reminder to arrive at the time I picked, so that I train when I planned to",
+      "business_value": "Delivery is the feature; the schedule alone changes nothing",
+      "source_requirement_ids": ["REQ-002"],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "AC-002",
+          "given": "the user selected Wednesday 07:30",
+          "when": "Wednesday 07:30 local time arrives",
+          "then": "a push notification is delivered"
+        }
+      ],
+      "business_rules": ["delivery uses the device timezone at send time, not at schedule time"],
+      "edge_cases": ["the user travels across a timezone between scheduling and delivery"],
+      "non_functional_requirements": ["delivery respects device timezone after travel"],
+      "dependencies": ["US-001"],
+      "domain_impact": { "fe": false, "be": true, "qa": true, "devops": true },
+      "readiness": "ready"
+    }
+  ],
+  "open_questions": [],
+  "assumptions": [
+    {
+      "assumption_id": "ASM-001",
+      "statement": "the existing push provider integration is reused rather than replaced",
+      "rationale": "the PRD names no provider; the app already sends transactional pushes, and introducing a second provider would be a platform decision the brief does not make",
+      "status": "adopted",
+      "affected_story_ids": ["US-002"]
+    }
+  ],
+  "cross_cutting_concerns": [
+    {
+      "concern": "timezone correctness affects scheduling and delivery together",
+      "affected_story_ids": ["US-001", "US-002"],
+      "affected_domains": ["be", "qa"]
+    }
+  ],
+  "coverage": {
+    "total": 2,
+    "included": 2,
+    "covered": 2,
+    "uncovered": 0,
+    "excluded": 0,
+    "percent": 100.0
+  },
+  "quality_checks": {
+    "requirements_traceable": true,
+    "stories_testable": true,
+    "no_duplicate_scope": true,
+    "no_estimates": true,
+    "no_invented_implementation": true,
+    "dependencies_valid": true
+  }
+}

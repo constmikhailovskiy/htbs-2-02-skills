@@ -1,0 +1,58 @@
+{
+  "_note": "Stands in for the four side skills. Shapes are deliberately as main specifies them today: frontend-estimate is three-point, the other three are expected-effort-only. That mix is an unresolved open thread in ORCHESTRATION.md, and summarize.py is expected to FAIL one_estimate_shape on it rather than sum it silently.",
+  "unit": "hours",
+  "sides": ["backend", "frontend", "qa", "devops"],
+  "stories": [{ "story_id": "US-001" }, { "story_id": "US-002" }],
+  "estimates": {
+    "frontend": {
+      "unit": "hours",
+      "estimates": [
+        {
+          "story_id": "US-001",
+          "estimable": "yes",
+          "optimistic": 6,
+          "likely": 10,
+          "pessimistic": 18,
+          "covers": ["AC-001"],
+          "no_fe": [],
+          "drivers": ["day/time picker", "empty and error states"],
+          "assumptions": ["the picker exists in the design system"],
+          "objections": ["no design for the deselect-every-day state"]
+        },
+        {
+          "story_id": "US-002",
+          "estimable": "none",
+          "optimistic": 0,
+          "likely": 0,
+          "pessimistic": 0,
+          "covers": [],
+          "no_fe": ["AC-002"],
+          "drivers": [],
+          "assumptions": [],
+          "objections": ["domain_impact.frontend is false — delivery has no UI"]
+        }
+      ]
+    },
+    "backend": {
+      "unit": "hours",
+      "estimates": [
+        { "story_id": "US-001", "estimable": "yes", "hours": 12, "note": "schedule CRUD on existing settings table" },
+        { "story_id": "US-002", "estimable": "yes", "hours": 26, "note": "scheduler, delivery, timezone recompute" }
+      ]
+    },
+    "qa": {
+      "unit": "hours",
+      "estimates": [
+        { "story_id": "US-001", "estimable": "yes", "hours": 8, "note": "schedule persistence and validation" },
+        { "story_id": "US-002", "estimable": "yes", "hours": 20, "note": "timezone, DST and travel cases need device-clock testing" }
+      ]
+    },
+    "devops": {
+      "unit": "hours",
+      "estimates": [
+        { "story_id": "US-001", "estimable": "none", "hours": 0, "note": "no infrastructure impact" },
+        { "story_id": "US-002", "estimable": "yes", "hours": 10, "note": "scheduler on existing cluster, plus a delivery alert" }
+      ]
+    }
+  }
+}

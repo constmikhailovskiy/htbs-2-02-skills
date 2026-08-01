@@ -14,6 +14,7 @@ In graph order — see [ORCHESTRATION.md](ORCHESTRATION.md) for how they are wir
 
 | Skill | Does | Status |
 |---|---|---|
+| `estimate` | **`/estimate <prd>` — drives the whole graph unattended**, owns validation, computes nothing | ✅ |
 | `estimate-orchestrator` | brief → which sides the feature actually needs | placeholder |
 | `brief-prd-input` | raw brief/PRD text → clean brief | placeholder |
 | `story-planner` | brief → implementable stories per `contracts/story.v1.md` | placeholder |
@@ -38,6 +39,52 @@ Aggregation is **not** model work — it is arithmetic (PERT `(o+4m+p)/6`, multi
 belongs outside the model by construction. `estimate-summary` and `brief-prd-input` have skill
 files, but their nodes are deterministic code and those files are never sent to a model. They
 document the contract; they do not instruct one.
+
+## Running it unattended
+
+`/estimate` drives the graph with no human in the loop. The deterministic steps it owns:
+
+```bash
+# gate the plan — deterministic, no reviewer
+python3 skills/story-planner-hitl/scripts/validate_story_plan.py scripts/fixtures/story-plan.json
+
+# plan shape -> contracts/story.v1.md  (fe/be -> frontend/backend, criterion_id -> id)
+python3 scripts/normalize_stories.py scripts/fixtures/story-plan.json > stories.json
+
+# side totals, grand total, one risk buffer
+python3 scripts/summarize.py scripts/fixtures/run.json
+```
+
+The fixtures stand in for the model steps, so all three run at **zero cost**.
+
+There is no approval step to waive: the planner reaches `READY_FOR_ESTIMATION` or `BLOCKED` in one
+pass. Everything else still blocks — coverage, traceability, readiness, dependency cycles, quality
+checks, and an assumption adopted without a `rationale`.
+
+**What replaced approval is worth naming.** Ambiguity is now closed by adopting a labelled assumption,
+so each one is a product decision a machine made unreviewed, and the total rests on all of them.
+A question marked `resolved_by_assumption` was not answered — it was decided. `/estimate` reports
+both, with rationales, ahead of the number. `BLOCKED` is the honest halt: a contradiction no
+assumption can resolve is not something to re-plan around.
+
+### Two format hazards the scripts exist to catch
+
+**`normalize_stories.py` is not cosmetic.** The plan schema writes `domain_impact.{fe,be,...}`; the
+estimators read `contracts/story.v1.md`, which uses `{frontend,backend,...}`. Feed raw plan output to
+`frontend-estimate` and every `domain_impact.frontend` lookup is falsy — the side returns
+`estimable: "none"` for every story and the estimate comes back zero, cheaply and confidently.
+
+**Mixed estimate shapes fail loudly.** `frontend-estimate` emits three-point; the other three
+placeholders are specified expected-effort-only. `summarize.py` refuses to present that as one
+comparable total:
+
+```
+FAIL  one_estimate_shape   mixed shapes ['expected_only', 'three_point'] — totals are not comparable
+verdict: NOT CONFIRMED
+```
+
+That is the ORCHESTRATION.md open thread, surfaced instead of summed. `scripts/fixtures/run.json`
+reproduces it deliberately; when all four sides agree on three-point the same input reads `CONFIRMED`.
 
 ## Install
 
