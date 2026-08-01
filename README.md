@@ -10,18 +10,34 @@ challenger skill attacks the result before it is reported.
 
 ## Skills
 
+In graph order — see [ORCHESTRATION.md](ORCHESTRATION.md) for how they are wired.
+
+| Skill | Does | Status |
+|---|---|---|
+| `estimate-orchestrator` | brief → which sides the feature actually needs | placeholder |
+| `brief-prd-input` | raw brief/PRD text → clean brief | placeholder |
+| `story-planner` | brief → implementable stories per `contracts/story.v1.md` | placeholder |
+| `be-estimate` | backend effort per story | placeholder |
+| `frontend-estimate` | frontend effort per story: optimistic / likely / pessimistic | ✅ |
+| `qa-estimate` | QA effort per story | placeholder |
+| `devops-estimate` | DevOps / infrastructure effort per story | placeholder |
+| `estimate-summary` | side totals, grand total, and the one risk buffer | placeholder |
+
+Not in the graph:
+
 | Skill | Does | Status |
 |---|---|---|
 | `wbs` | PRD → work items, each tagged with the `req` ids it implements | ✅ |
-| `frontend-estimate` | frontend slice per story: optimistic / likely / pessimistic | ✅ |
-| `aspect-backend` | days per item: optimistic / likely / pessimistic | planned |
-| `aspect-mobile` | same, mobile slice | planned |
-| `aspect-devops` | same, infra slice | planned |
 | `dimensions` | complexity / risk / unknowns per item | planned |
 | `challenger` | attacks the estimate: missed work, lowballed items | planned |
 
-Aggregation is **not** a skill — it is arithmetic (PERT `(o+4m+p)/6`, multipliers, sums) and
-belongs outside the model by construction.
+`wbs` and `story-planner` both decompose a source document into units of work. They predate each
+other and the overlap has not been resolved; the graph currently runs `story-planner`.
+
+Aggregation is **not** model work — it is arithmetic (PERT `(o+4m+p)/6`, multipliers, sums) and
+belongs outside the model by construction. `estimate-summary` and `brief-prd-input` have skill
+files, but their nodes are deterministic code and those files are never sent to a model. They
+document the contract; they do not instruct one.
 
 ## Install
 
@@ -36,6 +52,7 @@ belongs outside the model by construction.
 ```
 .claude-plugin/plugin.json       the plugin manifest
 .claude-plugin/marketplace.json  makes the repo installable as a marketplace
+ORCHESTRATION.md                 the LangGraph workflow these skills are the prompt layer of
 contracts/story.v1.md            the story shape every estimator and the planner reads
 skills/<name>/SKILL.md           one skill per file
 ```
