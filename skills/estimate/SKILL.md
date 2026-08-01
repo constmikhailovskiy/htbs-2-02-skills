@@ -1,7 +1,7 @@
 ---
 name: estimate
-description: Use when a PRD or feature brief must be turned into a defensible engineering estimate — orchestrates story decomposition, four discipline estimates and an adversarial challenge, gating on machine-checked validation at each step
-argument-hint: "[path to a PRD markdown file]"
+description: Use when a PRD or feature brief must be turned into a defensible engineering estimate end to end, unattended — drives side triage, story planning, deterministic validation, the four side estimators and the summary, with no human approval step
+argument-hint: "[path to a PRD or brief file]"
 allowed-tools:
   - Read
   - Write
@@ -9,136 +9,167 @@ allowed-tools:
   - Skill
 ---
 
-# /estimate — orchestrator
+# /estimate — autonomous orchestrator
 
-You coordinate other skills and you own validation. You estimate nothing yourself, and you never do
-arithmetic.
+You drive the estimation graph in `ORCHESTRATION.md` from a file path to a reported total, without
+stopping for a human. You estimate nothing yourself and you never do arithmetic.
 
 ```
-Start
-  └─ read PRD ──> story-planner ──> ✋ GATE: --stage stories
-                                        │ FAIL -> back to story-planner
-                                        │ PASS
-                    ┌───────────────────┴───────────────────┐
-              estimate-backend  estimate-frontend  estimate-qa  estimate-devops
-                    └───────────────────┬───────────────────┘
-                                  aggregate ──> challenger ──> aggregate once more
-                                                                    │
-                                                              report + verdict
+read PRD
+  └─ estimate-orchestrator ──> sides
+  └─ story-planner ──────────> story plan (story-plan.schema.json)
+        └─ ✋ validate_story_plan.py --autonomous     deterministic gate, no reviewer
+        └─ normalize_stories.py                      plan shape -> contracts/story.v1.md
+              ┌──────────────┬──────────────┬──────────────┐
+         be-estimate  frontend-estimate  qa-estimate  devops-estimate   (selected sides only)
+              └──────────────┴──────────────┴──────────────┘
+        └─ summarize.py ─────> side totals, grand total, one risk buffer
+        └─ report
 ```
 
-## Two rules that make this worth running
+## Three rules
 
-**1. Every number in the report is computed by `scripts/aggregate.py`, never by you.** You may copy
-per-story numbers into a JSON bundle because a discipline skill produced them. You may not add,
-average, multiply or "sanity check" a total. A total you wrote is indistinguishable from a total you
-invented, and nobody downstream can tell which it was.
+**1. Every number is computed by `scripts/summarize.py`, never by you.** You may copy per-story
+numbers a side skill produced into the run file. You may not add, average, reduce three-point to one
+number, or apply the buffer. A total you wrote is indistinguishable from one you invented.
 
-**2. You gate before you spend.** The decomposition is validated *before* any discipline estimates
-it. Four skills estimating a breakdown that dropped a requirement produces four consistent, wrong
-numbers — and the cost of finding out later is four calls, not one.
+**2. You gate before you spend.** The story plan is validated before any side estimates it. Four
+sides estimating a plan that dropped a requirement produce four consistent, wrong numbers, and
+finding out afterwards costs four calls instead of one.
+
+**3. Autonomous is not approved.** `--autonomous` waives the two human gates because there is no
+reviewer present. It waives nothing else. The validator emits a warning saying the plan is
+machine-validated rather than human-approved, and **that warning must reach your final report**.
+Never write a `decision_log` entry describing an approval that did not happen — a forged approval is
+worse than a missing one, because it cannot be detected downstream.
 
 ## Procedure
 
-### 1. Read the PRD
+### 1. Read the input
 
-Read the file at the given path. Take the feature slug from the filename and collect every `REQ-NNN`
-id in its Requirements section, literally. Do not renumber, invent or skip.
+Read the file at the given path. It is the raw brief. Do not summarise or rewrite it before planning;
+normalisation that drops a requirement silently removes work from the estimate.
 
-### 2. Decompose — `story-planner`
+Set `unit` to `hours` unless the invocation says otherwise, and never convert units afterwards.
 
-Invoke `story-planner` with the PRD text. It returns `stories[]` (each with the `req` ids it
-implements) and `open_questions[]`.
+### 2. Triage the sides — `estimate-orchestrator`
 
-Write `.estimates/<feature>/bundle.json`:
+Invoke `estimate-orchestrator` with the brief. It returns the subset of `backend`, `frontend`, `qa`,
+`devops` the feature genuinely needs.
+
+Selecting a side that does no work inflates the estimate; omitting a side that does work hides it.
+The second failure is the quieter one, so when the brief is ambiguous about a side, **include it** —
+an included side that finds nothing reports zero and says so, which is visible; an omitted side is
+indistinguishable from work nobody found.
+
+### 3. Plan the stories — `story-planner`
+
+Invoke `story-planner` (**not** `story-planner-hitl`, which is specified to stop for approval and
+will refuse to finish unattended).
+
+Write its output to `.estimates/<feature>/story-plan.json`, conforming to
+`skills/story-planner-hitl/references/story-plan.schema.json` — that schema is the shared format, and
+the validator below enforces it exactly.
+
+### 4. ✋ Gate the plan — you own this
+
+```bash
+python3 skills/story-planner-hitl/scripts/validate_story_plan.py \
+        --autonomous .estimates/<feature>/story-plan.json
+```
+
+**Do not continue while the result is `INVALID`.** Re-run `story-planner` with the errors quoted
+verbatim; they name the exact field and id. Common causes:
+
+| Error | Means |
+|---|---|
+| `coverage.*` must equal N | the plan's own coverage counts disagree with its requirement list |
+| `requires zero uncovered requirements` | a requirement reached no story — work is missing |
+| `references unknown requirements` | a story cites a `REQ` id that does not exist |
+| `traceability mismatch` | a requirement links a story that does not link back |
+| `has non-ready stories` | a story is `needs_clarification` or `blocked` |
+| `story dependency cycle` | the plan cannot be sequenced |
+
+Allow at most **two** re-plans. If the third attempt still fails, stop and report the validator
+output as the finding. A plan that cannot be made to cover the brief is a fact about the brief; it is
+not a reason to estimate anyway.
+
+Carry every `WARNING` forward — especially unapproved assumptions and the autonomous-mode waiver.
+
+### 5. Normalize to the story contract
+
+```bash
+python3 scripts/normalize_stories.py .estimates/<feature>/story-plan.json \
+        > .estimates/<feature>/stories.json
+```
+
+This is not cosmetic. The plan schema writes `domain_impact.{fe,be,qa,devops}`; the side estimators
+read `contracts/story.v1.md`, which uses `{frontend,backend,qa,devops}`. Handing raw plan output to
+`frontend-estimate` makes every `domain_impact.frontend` lookup falsy, so the side returns
+`estimable: "none"` for every story and the estimate comes back **zero, cheaply and confidently**.
+Skipping this step is the single easiest way to produce a wrong total that looks fine.
+
+### 6. Estimate — selected sides, one call each
+
+Invoke `be-estimate`, `frontend-estimate`, `qa-estimate`, `devops-estimate` — **only** those in
+`sides`, each **once**, passing the whole `stories.json` batch and the `unit`.
+
+Batch deliberately: one call per side, not one per story. Per-story calls cost roughly the story
+count times as much and produce less consistent numbers, because each call sees less of the feature
+and cannot price reuse across stories.
+
+Every side returns one entry per `story_id` it was given, in input order. A side that skips a story
+is reporting zero work for it, which is a claim it did not make on purpose — if entries are missing,
+re-run that side.
+
+Assemble `.estimates/<feature>/run.json`:
 
 ```json
 {
-  "prd": { "feature": "workout-reminders", "reqs": ["REQ-001"] },
-  "stories": [{ "id": "S-001", "title": "...", "req": ["REQ-001"] }],
-  "open_questions": []
+  "unit": "hours",
+  "sides": ["backend", "frontend", "qa"],
+  "stories": [{ "story_id": "US-001" }],
+  "estimates": { "frontend": { "unit": "hours", "estimates": [] } }
 }
 ```
 
-### 3. ✋ Gate the decomposition — you own this
+### 7. Summarize
 
 ```bash
-python3 scripts/aggregate.py --stage stories .estimates/<feature>/bundle.json
+python3 scripts/summarize.py .estimates/<feature>/run.json
 ```
 
-**Do not continue while any check reads FAIL.** Fix the cause and re-run the gate:
-
-| Check | Means | Do |
-|---|---|---|
-| `requirement_coverage` | the breakdown dropped a requirement | re-run `story-planner`, naming the missing ids |
-| `no_invented_reqs` | a story cites an id the PRD does not contain | re-run `story-planner`, naming the bad ids |
-| `story_ids_unique` | duplicate story ids | re-run `story-planner` |
-| `every_story_traced` | a story implements no requirement | re-run `story-planner`, naming that story |
-
-Re-running one cheap skill beats discovering this after four expensive ones. If two attempts do not
-pass, stop and report the gate output — a decomposition that cannot be made to cover the PRD is a
-finding about the PRD, not a reason to estimate anyway.
-
-### 4. Estimate — four disciplines, one call each
-
-Invoke `estimate-backend`, `estimate-frontend`, `estimate-qa` and `estimate-devops`, each **once**,
-passing the whole story list.
-
-Batch deliberately: one call per discipline, not one per story. Per-story calls cost roughly the story
-count times as much and produce *less* consistent numbers, because each call sees less of the feature.
-
-Each returns per story it touches `{o, m, p, complexity, risk, unknowns, assumption}`. A discipline
-that does not touch a story returns nothing for it — silence means "not mine", `0` would be a claim.
-
-Merge into the bundle under `estimates`, keyed by `backend` / `frontend` / `qa` / `devops`.
-
-### 5. Aggregate
-
-```bash
-python3 scripts/aggregate.py .estimates/<feature>/bundle.json
-```
-
-Read the checks. On FAIL, re-run only the discipline responsible:
+Three-point entries are reduced with PERT and expected-only entries taken as given, side totals
+summed, then the buffer applied once from `ESTIMATION_RISK_BUFFER_PCT` (default 15). On FAIL:
 
 | Check | Means |
 |---|---|
-| `every_story_estimated` | a story no discipline claimed — ask whether it is real work |
-| `three_point_ordered` | `o <= m <= p` violated; that discipline's numbers are malformed |
-| `assumptions_present` | an estimate arrived unjustified — the challenger has nothing to attack |
-| `no_open_blockers` | `story-planner` raised unanswered questions; see step 8 |
-
-### 6. Challenge — `challenger`
-
-Invoke `challenger` with the stories, all estimates with their assumptions, and the aggregate output.
-It returns `deltas[]` (revised `o/m/p` with a `why`), `missed_items[]` and `unresolved[]`.
-
-### 7. Re-aggregate once
-
-Add the `challenge` block to the bundle and run the script again. It now reports before, after and
-the delta.
-
-**Stop after one challenge round.** If the challenger still objects, report the objection as an
-unresolved concern. An unbounded argue-loop is how this runs out of clock, and the second round almost
-never moves the number as much as the first.
+| `all_selected_sides_reported` | a selected side never wrote its key — re-run it |
+| `every_story_covered_per_side` | a side skipped stories — re-run that side |
+| `one_estimate_shape` | three-point and expected-only mixed; totals are not comparable between runs |
+| `no_blocked_stories` | a story is unestimable; it must be reported, not priced |
 
 ### 8. Report
 
-Show the script's rendered table verbatim, then, in this order:
+Show the rendered table verbatim, then, in this order:
 
-1. **The delta** — what the challenge changed and which objection caused it. Lead with this, not with
-   the total. It is the most honest line in the report: it shows what the first pass missed.
-2. **`missed_items`** — work the challenger found that nobody priced. Not folded into the number;
-   listed, so someone decides.
-3. **Open questions**, each with the requirement it blocks. These outrank the number.
-4. **The verdict line**, unedited. If it reads `NOT CONFIRMED`, say so first and do not present the
+1. **The autonomous-mode warning**, stated plainly: this estimate was machine-validated, not
+   human-approved. First, not in a footnote.
+2. **Unapproved assumptions** — in an unattended run nobody approved them, and the total rests on
+   every one.
+3. **Open questions and blocked stories**, each with the requirement it blocks. These outrank the
+   number.
+4. **Unbuffered and buffered totals**, both, with the buffer percentage named. A single number hides
+   whether the buffer was applied.
+5. **The verdict line**, unedited. If it reads `NOT CONFIRMED`, lead with that and do not present the
    total as if it were confirmed.
 
-## When the PRD does not support an estimate
+## When the brief does not support an estimate
 
 If requirements name no concrete decision — a reward with no value, "must not be abusable" with no
-fraud rules, an integration with no named provider — the correct output is the open question, not a
-padded number. State plainly which requirements cannot be priced and why, and let the rest of the
-estimate stand on its own.
+fraud rules, an integration with no named provider — report the open question, not a padded number.
+Say which requirements cannot be priced and why, and let the rest stand.
 
-A confident estimate over an unanswered question is the failure mode this skill exists to prevent.
-Producing one is worse than producing nothing, because it will be believed.
+Running unattended makes this stricter, not looser: there is no reviewer to catch a confident number
+built on a guess. A confident estimate over an unanswered question is the failure this skill exists
+to prevent, and unattended it is the failure nobody is watching for.

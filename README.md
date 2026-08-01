@@ -10,54 +10,86 @@ challenger skill attacks the result before it is reported.
 
 ## Skills
 
-```
-Start
-  └─ read PRD ──> story-planner ──> ✋ GATE: --stage stories
-                                        │ FAIL -> back to story-planner
-                                        │ PASS
-                    ┌───────────────────┴───────────────────┐
-              estimate-backend  estimate-frontend  estimate-qa  estimate-devops
-                    └───────────────────┬───────────────────┘
-                                  aggregate ──> challenger ──> aggregate once more
-                                                                    │
-                                                              report + verdict
-```
+In graph order — see [ORCHESTRATION.md](ORCHESTRATION.md) for how they are wired.
 
 | Skill | Does | Status |
 |---|---|---|
-| `estimate` | **orchestrator** — `/estimate <prd.md>`; drives everything below, computes nothing | ✅ |
-| `story-planner` | PRD → stories, each tagged with the `req` ids it implements | ✅ |
-| `estimate-backend` | `o/m/p` + complexity/risk/unknowns per story | planned |
-| `estimate-frontend` | same, client slice | planned |
-| `estimate-qa` | same, testing slice | planned |
-| `estimate-devops` | same, platform slice | planned |
-| `challenger` | attacks the estimate: missed work, lowballed stories, assumptions that fail | planned |
+| `estimate` | **`/estimate <prd>` — drives the whole graph unattended**, owns validation, computes nothing | ✅ |
+| `estimate-orchestrator` | brief → which sides the feature actually needs | placeholder |
+| `brief-prd-input` | raw brief/PRD text → clean brief | placeholder |
+| `story-planner` | brief → implementable stories per `contracts/story.v1.md` | placeholder |
+| `be-estimate` | backend effort per story | placeholder |
+| `frontend-estimate` | frontend effort per story: optimistic / likely / pessimistic | ✅ |
+| `qa-estimate` | QA effort per story | placeholder |
+| `devops-estimate` | DevOps / infrastructure effort per story | placeholder |
+| `estimate-summary` | side totals, grand total, and the one risk buffer | placeholder |
 
-Aggregation is **not** a skill — it is arithmetic (PERT `(o+4m+p)/6`, factors, sums) and belongs
-outside the model by construction. It lives in `scripts/aggregate.py`, which also owns every
-validator and the verdict.
+Not in the graph:
 
-## The gate is the point
+| Skill | Does | Status |
+|---|---|---|
+| `wbs` | PRD → work items, each tagged with the `req` ids it implements | ✅ |
+| `dimensions` | complexity / risk / unknowns per item | planned |
+| `challenger` | attacks the estimate: missed work, lowballed items | planned |
 
-The decomposition is validated **before** any discipline estimates it:
+`wbs` and `story-planner` both decompose a source document into units of work. They predate each
+other and the overlap has not been resolved; the graph currently runs `story-planner`.
+
+Aggregation is **not** model work — it is arithmetic (PERT `(o+4m+p)/6`, multipliers, sums) and
+belongs outside the model by construction. `estimate-summary` and `brief-prd-input` have skill
+files, but their nodes are deterministic code and those files are never sent to a model. They
+document the contract; they do not instruct one.
+
+## Running it unattended
+
+`/estimate` drives the graph with no human in the loop. The deterministic steps it owns:
 
 ```bash
-python3 scripts/aggregate.py --stage stories scripts/fixtures/workout-reminders.json
-python3 scripts/aggregate.py               scripts/fixtures/workout-reminders.json
+# gate the plan — no reviewer present, so the two HITL gates are waived explicitly
+python3 skills/story-planner-hitl/scripts/validate_story_plan.py \
+        --autonomous scripts/fixtures/story-plan.json
+
+# plan shape -> contracts/story.v1.md  (fe/be -> frontend/backend, criterion_id -> id)
+python3 scripts/normalize_stories.py scripts/fixtures/story-plan.json > stories.json
+
+# side totals, grand total, one risk buffer
+python3 scripts/summarize.py scripts/fixtures/run.json
 ```
 
-Four skills estimating a breakdown that dropped a requirement produce four consistent, wrong numbers.
-Gating first costs one cheap re-run instead of four expensive ones.
+The fixtures stand in for the model steps, so all three run at **zero cost**.
 
-The fixture stands in for the discipline skills, so both stages run with **no model call and no cost**.
-Exit code is 0 only when every check passes — and the checks do fail when they should:
+**`--autonomous` waives the human gates and nothing else.** Coverage, traceability, readiness,
+dependency cycles and the quality checks all still block. The waiver is reported, so a
+machine-validated plan is never mistaken for an approved one:
 
 ```
-FAIL  requirement_coverage   6/7 covered; missing ['REQ-005']
-FAIL  no_invented_reqs       unknown ids ['REQ-999']
-FAIL  story_ids_unique       duplicated ['S-001']
-verdict: REJECTED — do not estimate this
+WARNING: autonomous mode: human approval gates waived — machine-validated, not human-approved
+WARNING: READY_FOR_ESTIMATION has unapproved assumptions: ASM-001
+VALID
 ```
+
+Without the flag the same plan is `INVALID` — `lacks approvals for: readiness_approval, scope_review`.
+Nothing forges a `decision_log` entry; an unattended run has no reviewer, and saying otherwise would
+be undetectable downstream.
+
+### Two format hazards the scripts exist to catch
+
+**`normalize_stories.py` is not cosmetic.** The plan schema writes `domain_impact.{fe,be,...}`; the
+estimators read `contracts/story.v1.md`, which uses `{frontend,backend,...}`. Feed raw plan output to
+`frontend-estimate` and every `domain_impact.frontend` lookup is falsy — the side returns
+`estimable: "none"` for every story and the estimate comes back zero, cheaply and confidently.
+
+**Mixed estimate shapes fail loudly.** `frontend-estimate` emits three-point; the other three
+placeholders are specified expected-effort-only. `summarize.py` refuses to present that as one
+comparable total:
+
+```
+FAIL  one_estimate_shape   mixed shapes ['expected_only', 'three_point'] — totals are not comparable
+verdict: NOT CONFIRMED
+```
+
+That is the ORCHESTRATION.md open thread, surfaced instead of summed. `scripts/fixtures/run.json`
+reproduces it deliberately; when all four sides agree on three-point the same input reads `CONFIRMED`.
 
 ## Install
 
@@ -72,7 +104,12 @@ verdict: REJECTED — do not estimate this
 ```
 .claude-plugin/plugin.json       the plugin manifest
 .claude-plugin/marketplace.json  makes the repo installable as a marketplace
+ORCHESTRATION.md                 the LangGraph workflow these skills are the prompt layer of
+contracts/story.v1.md            the story shape every estimator and the planner reads
 skills/<name>/SKILL.md           one skill per file
 ```
 
 Adding a skill is a new directory with a `SKILL.md`. Nothing else changes.
+
+Skills that consume stories reference `contracts/story.v1.md` rather than restating the shape,
+so the contract has one owner and one place to change.
