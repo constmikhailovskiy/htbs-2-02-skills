@@ -13,6 +13,7 @@ challenger skill attacks the result before it is reported.
 | Skill | Does | Status |
 |---|---|---|
 | `wbs` | PRD → work items, each tagged with the `req` ids it implements | ✅ |
+| `frontend-estimate` | frontend slice per story: optimistic / likely / pessimistic | ✅ |
 | `aspect-backend` | days per item: optimistic / likely / pessimistic | planned |
 | `aspect-mobile` | same, mobile slice | planned |
 | `aspect-devops` | same, infra slice | planned |
@@ -35,7 +36,11 @@ belongs outside the model by construction.
 ```
 .claude-plugin/plugin.json       the plugin manifest
 .claude-plugin/marketplace.json  makes the repo installable as a marketplace
+contracts/story.v1.md            the story shape every estimator and the planner reads
 skills/<name>/SKILL.md           one skill per file
 ```
 
 Adding a skill is a new directory with a `SKILL.md`. Nothing else changes.
+
+Skills that consume stories reference `contracts/story.v1.md` rather than restating the shape,
+so the contract has one owner and one place to change.
