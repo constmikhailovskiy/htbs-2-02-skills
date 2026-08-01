@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Story Planner HITL JSON without third-party dependencies."""
+"""Validate autonomous Story Planner JSON without third-party dependencies."""
 
 from __future__ import annotations
 
@@ -11,14 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-ALLOWED_STATUSES = {
-    "DRAFT_AWAITING_SCOPE_REVIEW": "scope_review",
-    "DRAFT_AWAITING_CLARIFICATION": "clarification",
-    "DRAFT_AWAITING_READINESS_APPROVAL": "readiness_approval",
-    "REVISION_REQUIRED": "revision",
-    "READY_FOR_ESTIMATION": "complete",
-    "BLOCKED": "blocked",
-}
+ALLOWED_STATUSES = {"READY_FOR_ESTIMATION", "BLOCKED"}
 
 REQUIRED_TOP_LEVEL = {
     "schema_version",
@@ -32,7 +25,6 @@ REQUIRED_TOP_LEVEL = {
     "cross_cutting_concerns",
     "coverage",
     "quality_checks",
-    "human_review",
 }
 
 FORBIDDEN_ESTIMATE_KEYS = {
@@ -280,7 +272,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
         validate_object_keys(story, STORY_KEYS, set(), path, errors)
         for key in ("story_id", "title", "user_story", "business_value"):
             require_string(story, key, path, errors)
-        if story.get("readiness") not in {"ready", "needs_clarification", "blocked"}:
+        if story.get("readiness") not in {"ready", "blocked"}:
             errors.append(f"{path}.readiness is invalid")
         for array_key in ("business_rules", "edge_cases", "non_functional_requirements"):
             value = story.get(array_key)
@@ -365,7 +357,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
         validate_object_keys(
             question,
             {"question_id", "question", "impact", "blocking", "status", "affected_story_ids"},
-            {"answer"},
+            {"resolution"},
             path,
             errors,
         )
@@ -373,7 +365,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
             require_string(question, key, path, errors)
         if not isinstance(question.get("blocking"), bool):
             errors.append(f"{path}.blocking must be boolean")
-        if question.get("status") not in {"open", "resolved", "deferred"}:
+        if question.get("status") not in {"open", "resolved_by_assumption"}:
             errors.append(f"{path}.status is invalid")
         affected = question.get("affected_story_ids", [])
         if not isinstance(affected, list):
@@ -382,8 +374,8 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
             unknown = sorted(set(affected) - story_id_set)
             if unknown:
                 errors.append(f"{path}.affected_story_ids references unknown stories: {', '.join(unknown)}")
-        if question.get("status") == "resolved" and not question.get("answer"):
-            errors.append(f"{path} is resolved but has no answer")
+        if question.get("status") == "resolved_by_assumption" and not question.get("resolution"):
+            errors.append(f"{path} is resolved_by_assumption but has no resolution")
 
     for index, assumption in enumerate(assumptions):
         path = f"$.assumptions[{index}]"
@@ -392,15 +384,15 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
             continue
         validate_object_keys(
             assumption,
-            {"assumption_id", "statement", "status", "affected_story_ids"},
+            {"assumption_id", "statement", "rationale", "status", "affected_story_ids"},
             set(),
             path,
             errors,
         )
-        for key in ("assumption_id", "statement"):
+        for key in ("assumption_id", "statement", "rationale"):
             require_string(assumption, key, path, errors)
-        if assumption.get("status") not in {"proposed", "approved", "rejected"}:
-            errors.append(f"{path}.status is invalid")
+        if assumption.get("status") != "adopted":
+            errors.append(f"{path}.status must be 'adopted'")
         affected = assumption.get("affected_story_ids", [])
         if not isinstance(affected, list):
             errors.append(f"{path}.affected_story_ids must be an array")
@@ -480,59 +472,6 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
             if check in quality and not isinstance(quality[check], bool):
                 errors.append(f"$.quality_checks.{check} must be boolean")
 
-    human_review = data.get("human_review")
-    if not isinstance(human_review, dict):
-        errors.append("$.human_review must be an object")
-        decision_log: list[Any] = []
-    else:
-        validate_object_keys(
-            human_review,
-            {"current_gate", "requested_decisions", "decision_log"},
-            set(),
-            "$.human_review",
-            errors,
-        )
-        if human_review.get("current_gate") not in {
-            "scope_review",
-            "clarification",
-            "readiness_approval",
-            "revision",
-            "complete",
-            "blocked",
-        }:
-            errors.append("$.human_review.current_gate is invalid")
-        requested_decisions = human_review.get("requested_decisions")
-        if not isinstance(requested_decisions, list) or not all(
-            isinstance(item, str) and item.strip() for item in requested_decisions
-        ):
-            errors.append("$.human_review.requested_decisions must be an array of non-empty strings")
-        decision_log = human_review.get("decision_log", [])
-        if not isinstance(decision_log, list):
-            errors.append("$.human_review.decision_log must be an array")
-            decision_log = []
-        for index, decision in enumerate(decision_log):
-            path = f"$.human_review.decision_log[{index}]"
-            if not isinstance(decision, dict):
-                errors.append(f"{path} must be an object")
-                continue
-            validate_object_keys(
-                decision,
-                {"gate", "decision", "reviewer", "notes"},
-                {"timestamp"},
-                path,
-                errors,
-            )
-            if decision.get("gate") not in {"scope_review", "readiness_approval", "clarification", "revision"}:
-                errors.append(f"{path}.gate is invalid")
-            if decision.get("decision") not in {"approved", "changes_requested", "answered", "rejected"}:
-                errors.append(f"{path}.decision is invalid")
-            require_string(decision, "reviewer", path, errors)
-            if not isinstance(decision.get("notes"), str):
-                errors.append(f"{path}.notes must be a string")
-        expected_gate = ALLOWED_STATUSES.get(status)
-        if expected_gate and human_review.get("current_gate") != expected_gate:
-            errors.append(f"$.human_review.current_gate must be '{expected_gate}' for status '{status}'")
-
     if status == "READY_FOR_ESTIMATION":
         if not stories:
             errors.append("READY_FOR_ESTIMATION requires at least one story")
@@ -542,85 +481,27 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
         blocking_open = [
             item.get("question_id")
             for item in questions
-            if isinstance(item, dict) and item.get("blocking") is True and item.get("status") != "resolved"
+            if isinstance(item, dict) and item.get("blocking") is True and item.get("status") != "resolved_by_assumption"
         ]
         if blocking_open:
-            errors.append("READY_FOR_ESTIMATION has unresolved blocking questions: " + ", ".join(map(str, blocking_open)))
-        proposed_assumptions = [
-            item.get("assumption_id")
-            for item in assumptions
-            if isinstance(item, dict) and item.get("status") == "proposed"
-        ]
-        if proposed_assumptions:
-            errors.append("READY_FOR_ESTIMATION has unapproved assumptions: " + ", ".join(map(str, proposed_assumptions)))
+            errors.append(
+                "READY_FOR_ESTIMATION has unresolved blocking questions (set status BLOCKED instead): "
+                + ", ".join(map(str, blocking_open))
+            )
         if isinstance(coverage, dict) and coverage.get("uncovered") != 0:
             errors.append("READY_FOR_ESTIMATION requires zero uncovered requirements")
         if isinstance(quality, dict):
             failed_checks = [key for key in REQUIRED_QUALITY_CHECKS if quality.get(key) is not True]
             if failed_checks:
                 errors.append("READY_FOR_ESTIMATION has failed quality checks: " + ", ".join(sorted(failed_checks)))
-        latest_revision = max(
-            (
-                index
-                for index, item in enumerate(decision_log)
-                if isinstance(item, dict)
-                and item.get("decision") in {"changes_requested", "rejected"}
-                and item.get("gate") in {"scope_review", "readiness_approval", "revision"}
-            ),
-            default=-1,
-        )
-        latest_scope = max(
-            (
-                index
-                for index, item in enumerate(decision_log)
-                if isinstance(item, dict)
-                and item.get("gate") == "scope_review"
-                and item.get("decision") == "approved"
-            ),
-            default=-1,
-        )
-        latest_readiness = max(
-            (
-                index
-                for index, item in enumerate(decision_log)
-                if isinstance(item, dict)
-                and item.get("gate") == "readiness_approval"
-                and item.get("decision") == "approved"
-            ),
-            default=-1,
-        )
-        missing_approvals: set[str] = set()
-        if latest_scope <= latest_revision:
-            missing_approvals.add("scope_review")
-        if latest_readiness <= max(latest_revision, latest_scope):
-            missing_approvals.add("readiness_approval")
-        if missing_approvals:
-            errors.append("READY_FOR_ESTIMATION lacks approvals for: " + ", ".join(sorted(missing_approvals)))
 
-    if status == "DRAFT_AWAITING_READINESS_APPROVAL":
-        latest_scope = max(
-            (
-                index
-                for index, item in enumerate(decision_log)
-                if isinstance(item, dict)
-                and item.get("gate") == "scope_review"
-                and item.get("decision") == "approved"
-            ),
-            default=-1,
+    if status == "BLOCKED":
+        has_blocking = any(
+            isinstance(item, dict) and item.get("blocking") is True and item.get("status") == "open"
+            for item in questions
         )
-        latest_revision = max(
-            (
-                index
-                for index, item in enumerate(decision_log)
-                if isinstance(item, dict)
-                and item.get("decision") in {"changes_requested", "rejected"}
-                and item.get("gate") in {"scope_review", "revision"}
-            ),
-            default=-1,
-        )
-        scope_approved = latest_scope > latest_revision
-        if not scope_approved:
-            errors.append("DRAFT_AWAITING_READINESS_APPROVAL requires scope_review approval")
+        if not has_blocking:
+            warnings.append("BLOCKED but no open blocking question records what decision is needed to resume")
 
     if not stories:
         warnings.append("plan contains no stories")

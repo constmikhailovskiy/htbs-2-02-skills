@@ -1,37 +1,29 @@
-# Story plan output contract
+# Story plan output contract (autonomous)
 
-Use this contract for both conversational and orchestrated runs. The JSON Schema is authoritative for field shapes; this document defines semantics and state transitions.
+Use this contract for both conversational and orchestrated runs. The JSON Schema is authoritative for field shapes; this document defines semantics. The skill runs to completion without human approval gates: it decides, records its reasoning, and emits a terminal result.
 
-## State machine
+## Terminal states
 
 ```text
-DRAFT_AWAITING_SCOPE_REVIEW
-  -> REVISION_REQUIRED -> DRAFT_AWAITING_SCOPE_REVIEW
-  -> DRAFT_AWAITING_CLARIFICATION -> DRAFT_AWAITING_SCOPE_REVIEW
-  -> DRAFT_AWAITING_READINESS_APPROVAL
-       -> REVISION_REQUIRED
-       -> DRAFT_AWAITING_CLARIFICATION
-       -> READY_FOR_ESTIMATION
-
-Any draft state -> BLOCKED when a required human decision prevents progress.
+READY_FOR_ESTIMATION   plan is complete and passes every quality check
+BLOCKED                a genuine contradiction or missing fact prevents decomposition
 ```
 
-Never transition to `READY_FOR_ESTIMATION` without separate `scope_review` and `readiness_approval` approvals.
+There are no intermediate or awaiting-human states. The skill never pauses for approval; it resolves ambiguity by adopting a labeled assumption, and only returns `BLOCKED` when no defensible assumption can unblock decomposition.
 
 ## Top-level fields
 
 - `schema_version`: Use `1.0`.
 - `plan_id`: Use a stable identifier supplied by the orchestrator or a locally unique identifier.
-- `status`: Use one of the state-machine values.
+- `status`: Use one of the terminal states.
 - `prd`: Identify the PRD without copying its full contents.
 - `requirements`: Maintain the traceability registry.
 - `stories`: Maintain independently estimable vertical slices.
-- `open_questions`: Expose ambiguity and its estimation impact.
-- `assumptions`: Record assumptions separately from requirements.
+- `open_questions`: Expose residual ambiguity and its estimation impact.
+- `assumptions`: Record every assumption the skill adopted to proceed.
 - `cross_cutting_concerns`: Identify concerns shared across stories without duplicating scope.
 - `coverage`: Report included, covered, uncovered, and excluded requirements.
 - `quality_checks`: Report deterministic and semantic checks.
-- `human_review`: Store the active gate, requested decisions, and immutable decision history.
 
 ## Requirement semantics
 
@@ -39,7 +31,7 @@ Use `evidence_type` as follows:
 
 - `explicit`: stated directly in the PRD;
 - `derived`: logically necessary to satisfy an explicit statement;
-- `assumption`: temporarily introduced and awaiting human confirmation.
+- `assumption`: introduced by the skill to proceed, and backed by a recorded entry in `assumptions`.
 
 Use `coverage_status` as follows:
 
@@ -62,35 +54,20 @@ Use `domain_impact` only as routing metadata:
 
 Do not add estimates, technical designs, implementation subtasks, or staffing recommendations.
 
-## HITL event contract
+Use `readiness`:
 
-Each decision-log entry must identify one gate:
+- `ready`: fully decomposed and estimable as-is;
+- `blocked`: cannot be estimated because a blocking question could not be resolved by assumption. A plan with any `blocked` story is `BLOCKED`.
 
-- `scope_review`
-- `readiness_approval`
-- `clarification`
-- `revision`
+## Ambiguity handling (no human in the loop)
 
-Use `decision` values:
+When the PRD is silent or ambiguous, the skill does not ask — it decides:
 
-- `approved`
-- `changes_requested`
-- `answered`
-- `rejected`
+1. Adopt the most defensible interpretation as an entry in `assumptions`, with a `statement`, a `rationale`, and `affected_story_ids`.
+2. If the ambiguity was surfaced as a question, keep it in `open_questions` with `status: resolved_by_assumption` and a `resolution` naming the adopting assumption.
+3. Any requirement decomposed under an assumption sets that requirement's `evidence_type` to `assumption`.
 
-For an orchestrator, resume the workflow with an event containing at minimum:
-
-```json
-{
-  "plan_id": "PLAN-001",
-  "gate": "scope_review",
-  "decision": "approved",
-  "reviewer": "product-owner",
-  "notes": "Scope and split accepted"
-}
-```
-
-Never overwrite older decisions. Append a new event. When a revision changes previously approved scope, append a new `changes_requested` event and require fresh affected approvals.
+Return `BLOCKED` only when the ambiguity is a true contradiction or a missing fact for which no interpretation is defensible. Record it as an `open_questions` entry with `blocking: true` and `status: open`, and describe the exact decision needed to resume.
 
 ## Readiness invariants
 
@@ -99,11 +76,10 @@ Require all of these for `READY_FOR_ESTIMATION`:
 1. Include at least one story.
 2. Mark every story `ready`.
 3. Set `qa: true` for every story.
-4. Resolve every blocking question.
+4. Leave no `open_questions` entry with `blocking: true` and `status: open` (such a plan must be `BLOCKED`).
 5. Cover every included requirement.
-6. Record approval for both HITL gates.
-7. Pass every quality check.
-8. Include no estimation or implementation-design fields.
+6. Pass every quality check.
+7. Include no estimation or implementation-design fields.
 
 ## Downstream handoff
 
@@ -112,7 +88,7 @@ Each estimator must receive:
 - stories routed to its domain;
 - acceptance criteria and linked requirements;
 - relevant dependencies and non-functional requirements;
-- approved assumptions and remaining non-blocking questions;
+- adopted assumptions and residual non-blocking questions;
 - cross-cutting concerns relevant to its domain.
 
 Do not ask downstream estimators to reconstruct scope from the original PRD.
